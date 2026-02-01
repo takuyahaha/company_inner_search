@@ -14,6 +14,28 @@ import constants as ct
 # 関数定義
 ############################################################
 
+# PDFファイルの場合のページ番号付与表示用関数
+def _format_file_path_with_page(file_path, page_number):
+    """
+    PDFファイルの場合のみ、ファイルパスにページ番号を付与して返す。
+
+    Args:
+        file_path: ファイルパス
+        page_number: ページ番号（0始まりの場合は表示用に+1する）
+
+    Returns:
+        ページ番号付きの表示用文字列（PDF以外はそのままfile_path）
+    """
+    if not file_path.lower().endswith(".pdf") or page_number is None:
+        return file_path
+    # PyMuPDFは0始まりのため、表示用に1始まりに変換
+    try:
+        display_page = int(page_number) + 1
+    except (TypeError, ValueError):
+        display_page = page_number
+    return f"{file_path}（ページNo.{display_page}）"
+
+
 def display_app_title():
     """
     タイトル表示
@@ -100,11 +122,12 @@ def display_conversation_log():
 
                         # 参照元のありかに応じて、適したアイコンを取得
                         icon = utils.get_source_icon(message['content']['main_file_path'])
-                        # 参照元ドキュメントのページ番号が取得できた場合にのみ、ページ番号を表示
-                        if "main_page_number" in message["content"]:
-                            st.success(f"{message['content']['main_file_path']}", icon=icon)
-                        else:
-                            st.success(f"{message['content']['main_file_path']}", icon=icon)
+                        # PDFの場合はページ番号を付与して表示(問題4)
+                        main_display = _format_file_path_with_page(
+                            message['content']['main_file_path'],
+                            message["content"].get("main_page_number")
+                        )
+                        st.success(main_display, icon=icon)
                         
                         # ==========================================
                         # ユーザー入力値と関連性が高いサブドキュメントのありかを表示
@@ -117,11 +140,12 @@ def display_conversation_log():
                             for sub_choice in message["content"]["sub_choices"]:
                                 # 参照元のありかに応じて、適したアイコンを取得
                                 icon = utils.get_source_icon(sub_choice['source'])
-                                # 参照元ドキュメントのページ番号が取得できた場合にのみ、ページ番号を表示
-                                if "page_number" in sub_choice:
-                                    st.info(f"{sub_choice['source']}", icon=icon)
-                                else:
-                                    st.info(f"{sub_choice['source']}", icon=icon)
+                                # PDFの場合はページ番号を付与して表示(問題4)
+                                sub_display = _format_file_path_with_page(
+                                    sub_choice['source'],
+                                    sub_choice.get("page_number")
+                                )
+                                st.info(sub_display, icon=icon)
                     # ファイルのありかの情報が取得できなかった場合、LLMからの回答のみ表示
                     else:
                         st.markdown(message["content"]["answer"])
@@ -162,6 +186,8 @@ def display_search_llm_response(llm_response):
         # ==========================================
         # LLMからのレスポンス（辞書）の「context」属性の中の「0」に、最も関連性が高いドキュメント情報が入っている
         main_file_path = llm_response["context"][0].metadata["source"]
+        main_metadata = llm_response["context"][0].metadata
+        main_page_number = main_metadata.get("page") if main_metadata.get("page") is not None else main_metadata.get("page_number")
 
         # 補足メッセージの表示
         main_message = "入力内容に関する情報は、以下のファイルに含まれている可能性があります。"
@@ -169,15 +195,9 @@ def display_search_llm_response(llm_response):
         
         # 参照元のありかに応じて、適したアイコンを取得
         icon = utils.get_source_icon(main_file_path)
-        # ページ番号が取得できた場合のみ、ページ番号を表示（ドキュメントによっては取得できない場合がある）
-        if "page" in llm_response["context"][0].metadata:
-            # ページ番号を取得
-            main_page_number = llm_response["context"][0].metadata["page"]
-            # 「メインドキュメントのファイルパス」と「ページ番号」を表示
-            st.success(f"{main_file_path}", icon=icon)
-        else:
-            # 「メインドキュメントのファイルパス」を表示
-            st.success(f"{main_file_path}", icon=icon)
+        # PDFの場合はページ番号を付与して表示(問題4)
+        main_display = _format_file_path_with_page(main_file_path, main_page_number)
+        st.success(main_display, icon=icon)
 
         # ==========================================
         # ユーザー入力値と関連性が高いサブドキュメントのありかを表示
@@ -204,15 +224,9 @@ def display_search_llm_response(llm_response):
             # 重複チェック用のリストにファイルパスを順次追加
             duplicate_check_list.append(sub_file_path)
             
-            # ページ番号が取得できない場合のための分岐処理
-            if "page" in document.metadata:
-                # ページ番号を取得
-                sub_page_number = document.metadata["page"]
-                # 「サブドキュメントのファイルパス」と「ページ番号」の辞書を作成
-                sub_choice = {"source": sub_file_path, "page_number": sub_page_number}
-            else:
-                # 「サブドキュメントのファイルパス」の辞書を作成
-                sub_choice = {"source": sub_file_path}
+            # ページ番号を取得（page または page_number キーを参照）
+            sub_page_number = document.metadata.get("page") if document.metadata.get("page") is not None else document.metadata.get("page_number") #PDFページ番号(問題4)
+            sub_choice = {"source": sub_file_path, "page_number": sub_page_number}
             
             # 後ほど一覧表示するため、サブドキュメントに関する情報を順次リストに追加
             sub_choices.append(sub_choice)
@@ -227,13 +241,9 @@ def display_search_llm_response(llm_response):
             for sub_choice in sub_choices:
                 # 参照元のありかに応じて、適したアイコンを取得
                 icon = utils.get_source_icon(sub_choice['source'])
-                # ページ番号が取得できない場合のための分岐処理
-                if "page_number" in sub_choice:
-                    # 「サブドキュメントのファイルパス」と「ページ番号」を表示
-                    st.info(f"{sub_choice['source']}", icon=icon)
-                else:
-                    # 「サブドキュメントのファイルパス」を表示
-                    st.info(f"{sub_choice['source']}", icon=icon)
+                # PDFの場合はページ番号を付与して表示(問題4)
+                sub_display = _format_file_path_with_page(sub_choice['source'], sub_choice.get("page_number"))
+                st.info(sub_display, icon=icon)
         
         # 表示用の会話ログに格納するためのデータを用意
         # - 「mode」: モード（「社内文書検索」or「社内問い合わせ」）
@@ -247,7 +257,7 @@ def display_search_llm_response(llm_response):
         content["main_message"] = main_message
         content["main_file_path"] = main_file_path
         # メインドキュメントのページ番号は、取得できた場合にのみ追加
-        if "page" in llm_response["context"][0].metadata:
+        if main_page_number is not None:
             content["main_page_number"] = main_page_number
         # サブドキュメントの情報は、取得できた場合にのみ追加
         if sub_choices:
@@ -305,15 +315,9 @@ def display_contact_llm_response(llm_response):
             if file_path in file_path_list:
                 continue
 
-            # ページ番号が取得できた場合のみ、ページ番号を表示（ドキュメントによっては取得できない場合がある）
-            if "page" in document.metadata:
-                # ページ番号を取得
-                page_number = document.metadata["page"]
-                # 「ファイルパス」と「ページ番号」
-                file_info = f"{file_path}"
-            else:
-                # 「ファイルパス」のみ
-                file_info = f"{file_path}"
+            # PDFの場合はページ番号を付与（問題4）
+            page_number = document.metadata.get("page") if document.metadata.get("page") is not None else document.metadata.get("page_number")
+            file_info = _format_file_path_with_page(file_path, page_number)
 
             # 参照元のありかに応じて、適したアイコンを取得
             icon = utils.get_source_icon(file_path)
@@ -322,7 +326,7 @@ def display_contact_llm_response(llm_response):
 
             # 重複チェック用に、ファイルパスをリストに順次追加
             file_path_list.append(file_path)
-            # ファイル情報をリストに順次追加
+            # ファイル情報をリストに順次追加（会話ログ表示用）
             file_info_list.append(file_info)
 
     # 表示用の会話ログに格納するためのデータを用意
